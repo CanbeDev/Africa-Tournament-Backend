@@ -1,0 +1,31 @@
+{
+  "federation": "Senegalese Football Federation",
+  "country": "Senegal",
+  "manager": "Aliou Cissé",
+  "players": [
+    {"name": "Sadio Mané", "position": "AT", "isCaptain": true},
+    {"name": "Kalidou Koulibaly", "position": "DF", "isCaptain": false},
+    {"name": "Édouard Mendy", "position": "GK", "isCaptain": false},
+    {"name": "Idrissa Gueye", "position": "MD", "isCaptain": false},
+    {"name": "Nampalys Mendy", "position": "MD", "isCaptain": false},
+    {"name": "Pape Matar Sarr", "position": "MD", "isCaptain": false},
+    {"name": "Ismaila Sarr", "position": "AT", "isCaptain": false},
+    {"name": "Boulaye Dia", "position": "AT", "isCaptain": false},
+    {"name": "Iliman Ndiaye", "position": "AT", "isCaptain": false},
+    {"name": "Habib Diallo", "position": "AT", "isCaptain": false},
+    {"name": "Krépin Diatta", "position": "AT", "isCaptain": false},
+    {"name": "Pape Gueye", "position": "MD", "isCaptain": false},
+    {"name": "Cheikhou Kouyaté", "position": "MD", "isCaptain": false},
+    {"name": "Fodé Ballo-Touré", "position": "DF", "isCaptain": false},
+    {"name": "Youssouf Sabaly", "position": "DF", "isCaptain": false},
+    {"name": "Abdou Diallo", "position": "DF", "isCaptain": false},
+    {"name": "Pape Abou Cissé", "position": "DF", "isCaptain": false},
+    {"name": "Formose Mendy", "position": "DF", "isCaptain": false},
+    {"name": "Moussa Niakhaté", "position": "DF", "isCaptain": false},
+    {"name": "Alfred Gomis", "position": "GK", "isCaptain": false},
+    {"name": "Seny Dieng", "position": "GK", "isCaptain": false},
+    {"name": "Lamine Camara", "position": "MD", "isCaptain": false},
+    {"name": "Pathe Ciss", "position": "MD", "isCaptain": false}
+  ]
+}
+
