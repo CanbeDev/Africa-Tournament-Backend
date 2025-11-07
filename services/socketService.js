@@ -6,6 +6,8 @@ class SocketService {
     this.io = null;
     this.activeConnections = new Map(); // socketId -> connection info
     this.matchSubscriptions = new Map(); // matchId -> Set of socketIds
+    this.userSockets = new Map(); // socketId -> user metadata
+    this.activeMatches = new Map(); // matchId -> Set of watcher socketIds
   }
 
   /**
@@ -34,15 +36,70 @@ class SocketService {
       console.log(`🔌 Client connected: ${socket.id}`);
       this.activeConnections.set(socket.id, { userId: null });
 
-      // Handle match subscriptions
+      socket.on('identify', (userData = {}) => {
+        this.userSockets.set(socket.id, {
+          userId: userData.userId || null,
+          username: userData.username || null,
+          role: userData.role || null
+        });
+        console.log(`👤 User identified: ${userData.username || 'unknown'} (${socket.id})`);
+      });
+
+      socket.on('match:join', (matchId) => {
+        if (!matchId) return;
+        socket.join(`match:${matchId}`);
+
+        if (!this.activeMatches.has(matchId)) {
+          this.activeMatches.set(matchId, new Set());
+        }
+        this.activeMatches.get(matchId).add(socket.id);
+
+        const watcherCount = this.activeMatches.get(matchId).size;
+        console.log(`👥 Client ${socket.id} joined match ${matchId} (${watcherCount} watching)`);
+
+        socket.emit('match:joined', { matchId, watcherCount });
+        this.io.to(`match:${matchId}`).emit('match:watchers', { matchId, count: watcherCount });
+      });
+
+      socket.on('match:leave', (matchId) => {
+        if (!matchId) return;
+        socket.leave(`match:${matchId}`);
+
+        if (this.activeMatches.has(matchId)) {
+          this.activeMatches.get(matchId).delete(socket.id);
+          const watcherCount = this.activeMatches.get(matchId).size;
+
+          console.log(`👋 Client ${socket.id} left match ${matchId} (${watcherCount} watching)`);
+
+          this.io.to(`match:${matchId}`).emit('match:watchers', { matchId, count: watcherCount });
+
+          if (watcherCount === 0) {
+            this.activeMatches.delete(matchId);
+          }
+        }
+      });
+
       socket.on('match:subscribe', (matchId) => this.handleMatchSubscription(socket, matchId));
       socket.on('match:unsubscribe', (matchId) => this.handleMatchUnsubscription(socket, matchId));
 
-      // Handle authentication
       socket.on('auth', (userId) => this.handleAuthentication(socket, userId));
 
-      // Handle disconnection
-      socket.on('disconnect', () => this.handleDisconnection(socket));
+      socket.on('disconnect', () => {
+        this.handleDisconnection(socket);
+
+        this.activeMatches.forEach((watchers, matchId) => {
+          if (watchers.has(socket.id)) {
+            watchers.delete(socket.id);
+            const watcherCount = watchers.size;
+            this.io.to(`match:${matchId}`).emit('match:watchers', { matchId, count: watcherCount });
+            if (watcherCount === 0) {
+              this.activeMatches.delete(matchId);
+            }
+          }
+        });
+
+        this.userSockets.delete(socket.id);
+      });
     });
   }
 
@@ -178,102 +235,6 @@ class SocketService {
    */
   getMatchSubscribers(matchId) {
     return this.matchSubscriptions.get(matchId)?.size || 0;
-  }
-}
-
-// Create and export singleton instance
-const socketService = new SocketService();
-module.exports = socketService;
-  setupEventHandlers() {
-    this.io.on('connection', (socket) => {
-      console.log(`🔌 Client connected: ${socket.id}`);
-
-      // Handle user identification
-      socket.on('identify', (userData) => {
-        this.userSockets.set(socket.id, {
-          userId: userData.userId,
-          username: userData.username,
-          role: userData.role
-        });
-        console.log(`👤 User identified: ${userData.username} (${socket.id})`);
-      });
-
-      // Handle joining match room
-      socket.on('match:join', (matchId) => {
-        socket.join(`match:${matchId}`);
-        
-        // Track active watchers
-        if (!this.activeMatches.has(matchId)) {
-          this.activeMatches.set(matchId, new Set());
-        }
-        this.activeMatches.get(matchId).add(socket.id);
-
-        const watcherCount = this.activeMatches.get(matchId).size;
-        console.log(`👥 Client ${socket.id} joined match ${matchId} (${watcherCount} watching)`);
-
-        // Notify user they joined successfully
-        socket.emit('match:joined', {
-          matchId,
-          watcherCount
-        });
-
-        // Broadcast updated watcher count to all in room
-        this.io.to(`match:${matchId}`).emit('match:watchers', {
-          matchId,
-          count: watcherCount
-        });
-      });
-
-      // Handle leaving match room
-      socket.on('match:leave', (matchId) => {
-        socket.leave(`match:${matchId}`);
-        
-        if (this.activeMatches.has(matchId)) {
-          this.activeMatches.get(matchId).delete(socket.id);
-          const watcherCount = this.activeMatches.get(matchId).size;
-          
-          console.log(`👋 Client ${socket.id} left match ${matchId} (${watcherCount} watching)`);
-
-          // Broadcast updated watcher count
-          this.io.to(`match:${matchId}`).emit('match:watchers', {
-            matchId,
-            count: watcherCount
-          });
-
-          // Clean up if no one watching
-          if (watcherCount === 0) {
-            this.activeMatches.delete(matchId);
-          }
-        }
-      });
-
-      // Handle disconnection
-      socket.on('disconnect', () => {
-        console.log(`🔌 Client disconnected: ${socket.id}`);
-        
-        // Remove from all match rooms
-        this.activeMatches.forEach((watchers, matchId) => {
-          if (watchers.has(socket.id)) {
-            watchers.delete(socket.id);
-            const watcherCount = watchers.size;
-            
-            // Broadcast updated count
-            this.io.to(`match:${matchId}`).emit('match:watchers', {
-              matchId,
-              count: watcherCount
-            });
-
-            // Clean up if empty
-            if (watcherCount === 0) {
-              this.activeMatches.delete(matchId);
-            }
-          }
-        });
-
-        // Remove user info
-        this.userSockets.delete(socket.id);
-      });
-    });
   }
 
   /**
