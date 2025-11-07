@@ -5,7 +5,7 @@ const Team = require('../models/Team');
 const Match = require('../models/Match');
 const TournamentState = require('../models/TournamentState');
 const { authenticate, authorize } = require('../middleware/auth');
-const bcrypt = require('bcryptjs');
+const { sendFederationWelcomeEmail } = require('../services/email');
 
 // POST /api/admin/create-user - Create new user (Admin only)
 router.post('/create-user', authenticate, authorize('admin'), async (req, res) => {
@@ -38,7 +38,8 @@ router.post('/create-user', authenticate, authorize('admin'), async (req, res) =
     }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase();
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -46,24 +47,37 @@ router.post('/create-user', authenticate, authorize('admin'), async (req, res) =
       });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Generate a stable user id (matches auth registration flow)
+    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Create user
+    // Create user - password hashed via model pre-save hook
     const newUser = await User.create({
-      email,
-      password: hashedPassword,
+      id: userId,
+      email: normalizedEmail,
+      password,
       role,
-      name: name || email.split('@')[0],
+      name: name || normalizedEmail.split('@')[0],
       country: country || null,
       federation: federation || null
     });
+
+    if (role === 'federation_rep') {
+      sendFederationWelcomeEmail({
+        email: newUser.email,
+        name: newUser.name,
+        country: newUser.country,
+        federation: newUser.federation
+      }).catch(err => {
+        console.error('Welcome email error:', err);
+      });
+    }
 
     res.status(201).json({
       success: true,
       message: 'User created successfully',
       user: {
-        id: newUser._id,
+        id: newUser.id,
+        mongoId: newUser._id,
         email: newUser.email,
         role: newUser.role,
         name: newUser.name,

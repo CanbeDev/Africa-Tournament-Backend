@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const Match = require('../models/Match');
+const User = require('../models/User');
+const validateRequest = require('../middleware/validateRequest');
+const { matchSimulationValidator, matchPlayValidator } = require('../middleware/validators');
 
 // Mock matches data (for backward compatibility)
 const mockMatches = [
@@ -389,11 +392,18 @@ router.get('/team/:teamId', async (req, res) => {
 // POST /api/matches/simulate - Simulate a match with full details (Admin only)
 const { authenticate, authorize, getUsers } = require('../middleware/auth');
 const { simulateFullMatch, simulateMatchWithRatings } = require('../services/matchSimulator');
-const { notifyFederations, notifyViewers } = require('../services/email');
+const { notifyFederations, notifyViewers, notifyFederationTeamVictory } = require('../services/email');
 const { advanceWinner, checkTournamentCompletion, updateCompletedMatchesCount } = require('../services/tournamentBracket');
+const { resolveKnockoutOutcome } = require('../services/knockoutResolver');
 const TournamentState = require('../models/TournamentState');
 
-router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
+router.post(
+  '/simulate',
+  authenticate,
+  authorize('admin'),
+  matchSimulationValidator,
+  validateRequest,
+  async (req, res) => {
   try {
     const { homeTeam, awayTeam, matchId, stage } = req.body;
     
@@ -420,11 +430,13 @@ router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
       }
       
       // Simulate the full match with detailed results
-      const matchResult = simulateFullMatch(
+      const simulatedResult = simulateFullMatch(
         existingMatch.homeTeam || homeTeam,
         existingMatch.awayTeam || awayTeam,
         existingMatch.stage || existingMatch.group || stage || 'Quarter Final'
       );
+
+      const { matchResult, replayRequired, decidedBy } = resolveKnockoutOutcome(existingMatch, simulatedResult);
       
       // Update match in database if it's from database (string ID), otherwise it's mock (read-only)
       const matchIdStr = String(matchId);
@@ -450,7 +462,15 @@ router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
           },
           { new: true, upsert: false }
         ).lean();
-        
+
+        if (replayRequired) {
+          return res.json({
+            success: true,
+            data: updatedMatch,
+            message: 'Match ended in a draw. Replay scheduled to determine a winner before advancing.'
+          });
+        }
+
         // Update completed matches count
         await updateCompletedMatchesCount();
         
@@ -481,15 +501,26 @@ router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
           .map(u => u.email);
         
         // Send email notifications (async, don't wait)
-        Promise.all([
+        const notificationPromises = [
           federationEmails.length > 0 && notifyFederations(updatedMatch, federationEmails),
           viewerEmails.length > 0 && notifyViewers(updatedMatch, viewerEmails)
-        ]).catch(err => console.error('Notification error:', err));
+        ].filter(Boolean);
+
+        if (updatedMatch.winner) {
+          const winnerUser = await User.findOne({ role: 'federation_rep', country: updatedMatch.winner }).lean();
+          if (winnerUser) {
+            notificationPromises.push(notifyFederationTeamVictory(updatedMatch, winnerUser));
+          }
+        }
+
+        Promise.all(notificationPromises).catch(err => console.error('Notification error:', err));
         
         const response = {
           success: true,
           data: updatedMatch,
-          message: 'Match simulated successfully. Notifications sent.'
+          message: decidedBy === 'penalties'
+            ? 'Match decided on penalties. Notifications sent.'
+            : 'Match simulated successfully. Notifications sent.'
         };
         
         // Include advancement info if it occurred
@@ -533,11 +564,20 @@ router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
     }
     
     // Simulate a new match with full details
-    const matchResult = simulateFullMatch(homeTeam, awayTeam, stage || 'Quarter Final');
+    const simulatedResult = simulateFullMatch(homeTeam, awayTeam, stage || 'Quarter Final');
+    const { matchResult, replayRequired } = resolveKnockoutOutcome({}, simulatedResult);
     
     // Store match in database
     const savedMatch = await Match.create(matchResult);
     
+    if (replayRequired) {
+      return res.json({
+        success: true,
+        data: savedMatch,
+        message: 'Match ended in a draw and has been flagged for replay.'
+      });
+    }
+
     // Get user emails for notifications
     const users = await getUsers();
     const federationEmails = users
@@ -583,10 +623,17 @@ router.post('/simulate', authenticate, authorize('admin'), async (req, res) => {
       message: error.message
     });
   }
-});
+  }
+);
 
 // POST /api/matches/play - Play a match with AI commentary (Admin only)
-router.post('/play', authenticate, authorize('admin'), async (req, res) => {
+router.post(
+  '/play',
+  authenticate,
+  authorize('admin'),
+  matchPlayValidator,
+  validateRequest,
+  async (req, res) => {
   try {
     const { matchId } = req.body;
     
@@ -633,14 +680,16 @@ router.post('/play', authenticate, authorize('admin'), async (req, res) => {
     }
     
     // Use the ratings-based simulator
-    const matchResult = simulateMatchWithRatings(
+    const simulatedResult = simulateMatchWithRatings(
       homeTeamData,
       awayTeamData,
       existingMatch.stage || existingMatch.group || 'Quarter Final'
     );
     
     // Mark as 'played' to differentiate from quick simulations
-    matchResult.matchType = 'played';
+    simulatedResult.matchType = 'played';
+
+    const { matchResult, replayRequired, decidedBy } = resolveKnockoutOutcome(existingMatch, simulatedResult);
     
     // Update match in database
     const updatedMatch = await Match.findOneAndUpdate(
@@ -652,6 +701,14 @@ router.post('/play', authenticate, authorize('admin'), async (req, res) => {
       { new: true, upsert: false }
     ).lean();
     
+    if (replayRequired) {
+      return res.json({
+        success: true,
+        data: updatedMatch,
+        message: 'Match ended in a draw. Replay required before tournament can progress.'
+      });
+    }
+
     // Update completed matches count
     await updateCompletedMatchesCount();
     
@@ -676,15 +733,26 @@ router.post('/play', authenticate, authorize('admin'), async (req, res) => {
     const federationEmails = users.filter(u => u.role === 'federation_rep').map(u => u.email);
     const viewerEmails = users.filter(u => u.role === 'viewer').map(u => u.email);
     
-    Promise.all([
+    const notificationPromises = [
       federationEmails.length > 0 && notifyFederations(updatedMatch, federationEmails),
       viewerEmails.length > 0 && notifyViewers(updatedMatch, viewerEmails)
-    ]).catch(err => console.error('Notification error:', err));
+    ].filter(Boolean);
+
+    if (updatedMatch.winner) {
+      const winnerUser = await User.findOne({ role: 'federation_rep', country: updatedMatch.winner }).lean();
+      if (winnerUser) {
+        notificationPromises.push(notifyFederationTeamVictory(updatedMatch, winnerUser));
+      }
+    }
+
+    Promise.all(notificationPromises).catch(err => console.error('Notification error:', err));
     
     const response = {
       success: true,
       data: updatedMatch,
-      message: 'Match played with live commentary! Notifications sent.'
+      message: decidedBy === 'penalties'
+        ? 'Match decided on penalties with live commentary! Notifications sent.'
+        : 'Match played with live commentary! Notifications sent.'
     };
     
     if (advancementResult) {
@@ -711,6 +779,7 @@ router.post('/play', authenticate, authorize('admin'), async (req, res) => {
       message: error.message
     });
   }
-});
+  }
+);
 
 module.exports = router;

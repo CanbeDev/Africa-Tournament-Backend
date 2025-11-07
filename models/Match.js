@@ -6,7 +6,7 @@ const goalScorerSchema = new mongoose.Schema({
   minute: { type: Number, required: true, min: 0, max: 120 },
   type: { 
     type: String, 
-    enum: ['normal', 'penalty', 'own-goal'],
+    enum: ['normal', 'penalty', 'own-goal', 'shootout'],
     default: 'normal'
   },
   team: { type: String, required: true }
@@ -15,17 +15,32 @@ const goalScorerSchema = new mongoose.Schema({
 // Commentary Event Schema
 const commentaryEventSchema = new mongoose.Schema({
   minute: { type: Number, required: true, min: 0, max: 120 },
+  timestamp: { type: Date, required: true, default: Date.now },
   type: { 
     type: String, 
     enum: [
       'kickoff', 'goal', 'halftime', 'fulltime', 'possession', 
-      'attack', 'chance', 'yellow-card', 'red-card', 'substitution'
+      'attack', 'chance', 'yellow-card', 'red-card', 'substitution',
+      'penalties', 'penalty-goal', 'penalty-miss', 'highlight'
     ],
     required: true
   },
   team: { type: String, default: null },
   playerName: { type: String, default: null },
-  description: { type: String, required: true }
+  description: { type: String, required: true },
+  replayData: {
+    type: {
+      positions: {
+        home: [{ x: Number, y: Number }],
+        away: [{ x: Number, y: Number }],
+        ball: { x: Number, y: Number }
+      },
+      duration: Number, // duration of the replay in seconds
+      startTime: Number, // when in the match this replay starts
+      isHighlight: Boolean
+    },
+    default: null
+  }
 }, { _id: false });
 
 // Player Statistics Schema
@@ -50,6 +65,21 @@ const playerStatsSchema = new mongoose.Schema({
   rating: { type: Number, default: 0, min: 0, max: 10 }
 }, { _id: false });
 
+// Penalty Shootout Schema
+const penaltyShootoutSchema = new mongoose.Schema({
+  homeTeamPenalties: [{
+    playerName: { type: String, required: true },
+    scored: { type: Boolean, required: true }
+  }],
+  awayTeamPenalties: [{
+    playerName: { type: String, required: true },
+    scored: { type: Boolean, required: true }
+  }],
+  homeTeamScore: { type: Number, required: true, min: 0 },
+  awayTeamScore: { type: Number, required: true, min: 0 },
+  winner: { type: String, required: true }
+}, { _id: false });
+
 // Match Schema
 const matchSchema = new mongoose.Schema({
   id: { 
@@ -70,12 +100,39 @@ const matchSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  penaltyShootout: { 
+    type: penaltyShootoutSchema,
+    default: null
+  },
+  isThirdPlace: {
+    type: Boolean,
+    default: false
+  },
   status: { 
     type: String, 
-    enum: ['scheduled', 'live', 'completed', 'upcoming'],
+    enum: ['scheduled', 'live', 'penalties', 'completed', 'upcoming', 'requires_replay'],
     default: 'scheduled',
     index: true
   },
+  resolution: {
+    type: String,
+    enum: ['regular', 'penalties', 'replay_pending'],
+    default: 'regular'
+  },
+  requiresReplay: {
+    type: Boolean,
+    default: false
+  },
+  replayCount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  replayHistory: [{
+    homeScore: { type: Number, min: 0 },
+    awayScore: { type: Number, min: 0 },
+    recordedAt: { type: Date, default: Date.now }
+  }],
   date: { 
     type: Date, 
     default: Date.now,
@@ -87,7 +144,7 @@ const matchSchema = new mongoose.Schema({
   },
   roundStage: {
     type: String,
-    enum: ['quarter', 'semi', 'final', null],
+    enum: ['quarter', 'semi', 'final', 'third_place', null],
     default: null,
     index: true
   },

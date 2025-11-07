@@ -11,29 +11,185 @@ const {
 } = require('../services/tournamentBracket');
 
 // GET /api/tournament/status - Get tournament status
-router.get('/status', (req, res) => {
-  res.json({
-    status: 'active',
-    teamsCount: 8,
-    matchesPlayed: 4,
-    totalGoals: 45,
-    yellowCards: 23,
-    redCards: 5,
-    currentPhase: 'Quarter Finals'
-  });
+router.get('/status', async (req, res) => {
+  try {
+    const tournamentStatePromise = TournamentState.getCurrent();
+    const activeTeamsPromise = Team.countDocuments({ isActive: true });
+    const matchSummaryPromise = Match.aggregate([
+      {
+        $match: {
+          status: 'completed'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          matchesPlayed: { $sum: 1 },
+          totalGoals: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$homeScore', 0] },
+                { $ifNull: ['$awayScore', 0] }
+              ]
+            }
+          },
+          yellowCards: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$statistics.yellowCards.home', 0] },
+                { $ifNull: ['$statistics.yellowCards.away', 0] }
+              ]
+            }
+          },
+          redCards: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$statistics.redCards.home', 0] },
+                { $ifNull: ['$statistics.redCards.away', 0] }
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const upcomingMatchesPromise = Match.countDocuments({
+      status: { $in: ['scheduled', 'upcoming'] }
+    });
+
+    const [tournamentState, activeTeams, matchSummaryAgg, upcomingMatches] = await Promise.all([
+      tournamentStatePromise,
+      activeTeamsPromise,
+      matchSummaryPromise,
+      upcomingMatchesPromise
+    ]);
+
+    const matchSummary = matchSummaryAgg[0] || {};
+    const matchesPlayed = matchSummary.matchesPlayed || 0;
+    const totalGoals = matchSummary.totalGoals || 0;
+    const yellowCards = matchSummary.yellowCards || 0;
+    const redCards = matchSummary.redCards || 0;
+
+    let status = 'registration';
+    if (tournamentState.currentStage === 'completed') {
+      status = 'completed';
+    } else if (matchesPlayed > 0 || upcomingMatches > 0) {
+      status = 'active';
+    }
+
+    const stageLabels = {
+      registration: 'Registration',
+      quarter: 'Quarter Finals',
+      semi: 'Semi Finals',
+      final: 'Final',
+      completed: 'Completed'
+    };
+
+    res.json({
+      status,
+      teamsCount: activeTeams,
+      matchesPlayed,
+      totalGoals,
+      yellowCards,
+      redCards,
+      upcomingMatches,
+      currentPhase: stageLabels[tournamentState.currentStage] || tournamentState.currentStage,
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching tournament status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    });
+  }
 });
 
 // GET /api/tournament/stats - Get tournament statistics
-router.get('/stats', (req, res) => {
-  res.json({
-    totalMatches: 120,
-    totalGoals: 345,
-    activeFederations: 32,
-    topScorer: {
-      name: 'L. Messi',
-      goals: 9
-    }
-  });
+router.get('/stats', async (req, res) => {
+  try {
+    const matchTotalsPromise = Match.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalMatches: { $sum: 1 },
+          totalGoals: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$homeScore', 0] },
+                { $ifNull: ['$awayScore', 0] }
+              ]
+            }
+          },
+          completedMatches: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'completed'] }, 1, 0]
+            }
+          }
+        }
+      }
+    ]);
+
+    const activeFederationsPromise = Team.distinct('federation', { isActive: true });
+
+    const topScorerPromise = Match.aggregate([
+      {
+        $match: {
+          status: 'completed',
+          goalScorers: { $exists: true, $ne: [] }
+        }
+      },
+      { $unwind: '$goalScorers' },
+      {
+        $group: {
+          _id: {
+            name: '$goalScorers.playerName',
+            team: '$goalScorers.team'
+          },
+          goals: { $sum: 1 }
+        }
+      },
+      { $sort: { goals: -1 } },
+      { $limit: 1 }
+    ]);
+
+    const [matchTotalsAgg, activeFederations, topScorerAgg] = await Promise.all([
+      matchTotalsPromise,
+      activeFederationsPromise,
+      topScorerPromise
+    ]);
+
+    const matchTotals = matchTotalsAgg[0] || {};
+    const totalMatches = matchTotals.totalMatches || 0;
+    const totalGoals = matchTotals.totalGoals || 0;
+    const completedMatches = matchTotals.completedMatches || 0;
+
+    const topScorerDoc = topScorerAgg[0];
+    const topScorer = topScorerDoc
+      ? {
+          name: topScorerDoc._id.name,
+          team: topScorerDoc._id.team,
+          goals: topScorerDoc.goals
+        }
+      : null;
+
+    res.json({
+      totalMatches,
+      completedMatches,
+      totalGoals,
+      activeFederations: activeFederations.length,
+      topScorer,
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching tournament stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    });
+  }
 });
 
 // GET /api/tournament/top-scorers - Get top goal scorers from database

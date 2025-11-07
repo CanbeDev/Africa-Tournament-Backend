@@ -4,32 +4,69 @@ const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../middleware/auth');
 const User = require('../models/User');
 const router = express.Router();
+const { sendFederationWelcomeEmail } = require('../services/email');
+const validateRequest = require('../middleware/validateRequest');
+const { userRegisterValidator, userLoginValidator } = require('../middleware/validators');
+const logger = require('../utils/logger');
 
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     tags:
+ *       - Auth
+ *     summary: Register a new user
+ *     description: |
+ *       Create a new account for administrators, federation representatives, or viewers.
+ *       Federation representatives must supply their name, country, and federation details.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AuthRegisterRequest'
+ *           examples:
+ *             federationRepresentative:
+ *               summary: Federation representative registration
+ *               value:
+ *                 email: 'rep@federation.org'
+ *                 password: 'SecurePass123!'
+ *                 role: 'federation_rep'
+ *                 name: 'Kwesi Appiah'
+ *                 country: 'Ghana'
+ *                 federation: 'Ghana Football Association'
+ *             viewer:
+ *               summary: Viewer sign-up
+ *               value:
+ *                 email: 'fan@example.com'
+ *                 password: 'FanPass456!'
+ *                 role: 'viewer'
+ *                 name: 'Fatima Diallo'
+ *     responses:
+ *       '201':
+ *         description: User registered successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthResponse'
+ *       '400':
+ *         $ref: '#/components/responses/BadRequest'
+ *       '409':
+ *         $ref: '#/components/responses/ConflictError'
+ *       '500':
+ *         $ref: '#/components/responses/InternalError'
+ */
 // POST /api/auth/register - Register a new user (Admin, Federation Representative, or Viewer)
-router.post('/register', async (req, res) => {
+router.post('/register', userRegisterValidator, validateRequest, async (req, res) => {
   try {
     const { email, password, role, name, country, federation } = req.body;
-    
-    // Validation
-    if (!email || !password || !role) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: email, password, role'
-      });
-    }
-    
-    // Validate role
-    const validRoles = ['admin', 'federation_rep', 'viewer'];
-    if (!validRoles.includes(role)) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid role. Must be one of: ${validRoles.join(', ')}`
-      });
-    }
     
     // Validate federation_rep specific fields
     if (role === 'federation_rep') {
       if (!name || !country || !federation) {
+        logger.warn('Federation representative registration missing required fields', {
+          email,
+        });
         return res.status(400).json({
           success: false,
           error: 'Federation representatives require: name, country, federation'
@@ -46,6 +83,7 @@ router.post('/register', async (req, res) => {
     // Check if user already exists in database
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
+      logger.warn('Registration attempt for existing user', { email: email.toLowerCase() });
       return res.status(409).json({
         success: false,
         error: 'User with this email already exists'
@@ -66,6 +104,22 @@ router.post('/register', async (req, res) => {
       federation: federation || null
     });
     
+    // Trigger welcome email for federation reps (fire and forget)
+    if (role === 'federation_rep') {
+      sendFederationWelcomeEmail({
+        email: newUser.email,
+        name: newUser.name,
+        country: newUser.country,
+        federation: newUser.federation
+      }).catch(err => {
+        logger.error('Welcome email error', {
+          email: newUser.email,
+          error: err.message,
+          stack: err.stack,
+        });
+      });
+    }
+
     // Generate JWT token
     const token = jwt.sign(
       {
@@ -91,6 +145,11 @@ router.post('/register', async (req, res) => {
       createdAt: newUser.createdAt
     };
     
+    logger.info('User registration successful', {
+      userId: newUser.id,
+      role: newUser.role,
+    });
+
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -99,7 +158,11 @@ router.post('/register', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error', {
+      email: req.body?.email,
+      error: error.message,
+      stack: error.stack,
+    });
     res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -108,22 +171,49 @@ router.post('/register', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     tags:
+ *       - Auth
+ *     summary: Authenticate and obtain access token
+ *     description: Validate user credentials and return a JWT access token along with the user profile.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AuthLoginRequest'
+ *           examples:
+ *             login:
+ *               summary: Standard login request
+ *               value:
+ *                 email: 'rep@federation.org'
+ *                 password: 'SecurePass123!'
+ *     responses:
+ *       '200':
+ *         description: Login successful.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthResponse'
+ *       '400':
+ *         $ref: '#/components/responses/BadRequest'
+ *       '401':
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       '500':
+ *         $ref: '#/components/responses/InternalError'
+ */
 // POST /api/auth/login - Login and receive JWT token
-router.post('/login', async (req, res) => {
+router.post('/login', userLoginValidator, validateRequest, async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Validation
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: email, password'
-      });
-    }
     
     // Find user in database
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
+      logger.warn('Login failed: user not found', { email: email.toLowerCase() });
       return res.status(401).json({
         success: false,
         error: 'Invalid email or password'
@@ -133,6 +223,7 @@ router.post('/login', async (req, res) => {
     // Verify password using model method
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
+      logger.warn('Login failed: invalid password', { userId: user.id, email: user.email });
       return res.status(401).json({
         success: false,
         error: 'Invalid email or password'
@@ -164,6 +255,11 @@ router.post('/login', async (req, res) => {
       createdAt: user.createdAt
     };
     
+    logger.info('User login successful', {
+      userId: user.id,
+      role: user.role,
+    });
+
     res.json({
       success: true,
       message: 'Login successful',
@@ -172,7 +268,11 @@ router.post('/login', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', {
+      email: req.body?.email,
+      error: error.message,
+      stack: error.stack,
+    });
     res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -181,6 +281,34 @@ router.post('/login', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     tags:
+ *       - Auth
+ *     summary: Retrieve authenticated user profile
+ *     description: Returns the currently authenticated user's profile details extracted from the JWT token.
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Authenticated user details.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *       '401':
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       '500':
+ *         $ref: '#/components/responses/InternalError'
+ */
 // GET /api/auth/me - Get currently logged-in user details (protected)
 const { authenticate } = require('../middleware/auth');
 router.get('/me', authenticate, (req, res) => {
@@ -195,13 +323,21 @@ router.get('/me', authenticate, (req, res) => {
       federation: req.user.federation
     };
     
+    logger.debug('User fetched profile', {
+      userId: req.user.id,
+    });
+
     res.json({
       success: true,
       user: userResponse
     });
     
   } catch (error) {
-    console.error('Get user error:', error);
+    logger.error('Get user error', {
+      userId: req.user?.id,
+      error: error.message,
+      stack: error.stack,
+    });
     res.status(500).json({
       success: false,
       error: 'Internal server error',

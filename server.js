@@ -60,17 +60,22 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    error: 'Something went wrong!',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    console.error(err.stack);
+    res.status(500).json({ 
+      error: 'Something went wrong!',
+      message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
   });
-});
-
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
+  
+  // Root route (for Render or browser visits)
+  app.get('/', (req, res) => {
+    res.send('🌍 Pan African Kicks Backend API is Live!');
+  });
+  
+  // 404 handler 
+  app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+  });
 
 // Create HTTP server and initialize Socket.io
 const server = http.createServer(app);

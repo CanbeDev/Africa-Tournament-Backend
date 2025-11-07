@@ -26,7 +26,11 @@
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
     "resend": "^6.4.0",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.2",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "winston": "^3.18.3",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

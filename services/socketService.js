@@ -1,10 +1,11 @@
 const { Server } = require('socket.io');
+const Match = require('../models/Match');
 
 class SocketService {
   constructor() {
     this.io = null;
-    this.activeMatches = new Map(); // matchId -> Set of socketIds watching
-    this.userSockets = new Map(); // socketId -> user info
+    this.activeConnections = new Map(); // socketId -> connection info
+    this.matchSubscriptions = new Map(); // matchId -> Set of socketIds
   }
 
   /**
@@ -28,6 +29,161 @@ class SocketService {
   /**
    * Setup Socket.io event handlers
    */
+  setupEventHandlers() {
+    this.io.on('connection', (socket) => {
+      console.log(`🔌 Client connected: ${socket.id}`);
+      this.activeConnections.set(socket.id, { userId: null });
+
+      // Handle match subscriptions
+      socket.on('match:subscribe', (matchId) => this.handleMatchSubscription(socket, matchId));
+      socket.on('match:unsubscribe', (matchId) => this.handleMatchUnsubscription(socket, matchId));
+
+      // Handle authentication
+      socket.on('auth', (userId) => this.handleAuthentication(socket, userId));
+
+      // Handle disconnection
+      socket.on('disconnect', () => this.handleDisconnection(socket));
+    });
+  }
+
+  /**
+   * Handle client subscribing to match updates
+   * @param {Socket} socket - Client socket
+   * @param {string} matchId - ID of match to subscribe to
+   */
+  async handleMatchSubscription(socket, matchId) {
+    socket.join(`match:${matchId}`);
+
+    if (!this.matchSubscriptions.has(matchId)) {
+      this.matchSubscriptions.set(matchId, new Set());
+    }
+    this.matchSubscriptions.get(matchId).add(socket.id);
+
+    // Send initial match state
+    await this.sendMatchUpdate(matchId);
+    console.log(`👀 Client ${socket.id} subscribed to match ${matchId}`);
+  }
+
+  /**
+   * Handle client unsubscribing from match updates
+   * @param {Socket} socket - Client socket
+   * @param {string} matchId - ID of match to unsubscribe from
+   */
+  handleMatchUnsubscription(socket, matchId) {
+    socket.leave(`match:${matchId}`);
+    
+    const subscribers = this.matchSubscriptions.get(matchId);
+    if (subscribers) {
+      subscribers.delete(socket.id);
+      if (subscribers.size === 0) {
+        this.matchSubscriptions.delete(matchId);
+      }
+    }
+    console.log(`👋 Client ${socket.id} unsubscribed from match ${matchId}`);
+  }
+
+  /**
+   * Handle client authentication
+   * @param {Socket} socket - Client socket
+   * @param {string} userId - ID of authenticated user
+   */
+  handleAuthentication(socket, userId) {
+    const connection = this.activeConnections.get(socket.id);
+    if (connection) {
+      connection.userId = userId;
+      console.log(`🔐 Client ${socket.id} authenticated as user ${userId}`);
+    }
+  }
+
+  /**
+   * Handle client disconnection
+   * @param {Socket} socket - Client socket
+   */
+  handleDisconnection(socket) {
+    console.log(`❌ Client disconnected: ${socket.id}`);
+    
+    // Clean up match subscriptions
+    this.matchSubscriptions.forEach((subscribers, matchId) => {
+      if (subscribers.has(socket.id)) {
+        subscribers.delete(socket.id);
+        if (subscribers.size === 0) {
+          this.matchSubscriptions.delete(matchId);
+        }
+      }
+    });
+
+    // Remove from active connections
+    this.activeConnections.delete(socket.id);
+  }
+
+  /**
+   * Send match state update to subscribed clients
+   * @param {string} matchId - ID of match to send update for
+   */
+  async sendMatchUpdate(matchId) {
+    try {
+      const match = await Match.findOne({ id: matchId });
+      if (match) {
+        this.io.to(`match:${matchId}`).emit('match:update', {
+          match,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      console.error(`❌ Error sending match update for ${matchId}:`, error);
+    }
+  }
+
+  /**
+   * Emit event to all clients subscribed to a match
+   * @param {string} matchId - ID of match to emit to
+   * @param {string} event - Event name
+   * @param {Object} data - Event data
+   */
+  emitToMatch(matchId, event, data) {
+    if (this.io) {
+      this.io.to(`match:${matchId}`).emit(event, {
+        ...data,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Emit event to all connected clients
+   * @param {string} event - Event name
+   * @param {Object} data - Event data
+   */
+  emitToAll(event, data) {
+    if (this.io) {
+      this.io.emit(event, {
+        ...data,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Get number of active client connections
+   * @returns {number} Number of active connections
+   */
+  getActiveConnections() {
+    return this.activeConnections.size;
+  }
+
+  /**
+   * Get number of clients subscribed to a match
+   * @param {string} matchId - ID of match
+   * @returns {number} Number of subscribers
+   */
+  getMatchSubscribers(matchId) {
+    return this.matchSubscriptions.get(matchId)?.size || 0;
+  }
+}
+
+// Create and export singleton instance
+const socketService = new SocketService();
+module.exports = socketService;
   setupEventHandlers() {
     this.io.on('connection', (socket) => {
       console.log(`🔌 Client connected: ${socket.id}`);

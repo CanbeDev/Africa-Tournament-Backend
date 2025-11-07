@@ -1,0 +1,94 @@
+[
+  {
+    "id": "match_reminder",
+    "subject": "Match Reminder: {{homeTeam}} vs {{awayTeam}}",
+    "html": `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2c3e50;">🏆 Upcoming Match Reminder</h2>
+        
+        <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <h3 style="color: #e67e22; margin-bottom: 15px;">{{homeTeam}} vs {{awayTeam}}</h3>
+          <p><strong>Date:</strong> {{matchDate}}</p>
+          <p><strong>Stage:</strong> {{stage}}</p>
+          <p><strong>Venue:</strong> {{venue}}</p>
+        </div>
+
+        <p>Don't miss this exciting match in the Pan-African Tournament! Click the button below to view match details.</p>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="{{matchUrl}}" style="background-color: #e67e22; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block;">View Match Details</a>
+        </div>
+
+        <hr style="border: 1px solid #eee; margin: 30px 0;">
+
+        <p style="font-size: 12px; color: #7f8c8d;">You received this email because you subscribed to match notifications. To unsubscribe, click <a href="{{unsubscribeUrl}}" style="color: #e67e22;">here</a>.</p>
+      </div>
+    `
+  },
+  {
+    "id": "match_result",
+    "subject": "Match Result: {{homeTeam}} {{homeScore}} - {{awayScore}} {{awayTeam}}",
+    "html": `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2c3e50;">⚽ Match Result</h2>
+        
+        <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <h3 style="color: #e67e22; margin-bottom: 15px;">{{homeTeam}} {{homeScore}} - {{awayScore}} {{awayTeam}}</h3>
+          <p><strong>Stage:</strong> {{stage}}</p>
+          {{#if penalties}}
+          <p><strong>Penalties:</strong> {{penaltyScore}}</p>
+          {{/if}}
+        </div>
+
+        <h4 style="color: #2c3e50;">Match Highlights</h4>
+        <ul style="list-style: none; padding: 0;">
+          {{#each events}}
+          <li style="margin: 10px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+            ⏰ {{minute}}' - {{description}}
+          </li>
+          {{/each}}
+        </ul>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="{{matchUrl}}" style="background-color: #e67e22; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block;">View Full Match Report</a>
+        </div>
+
+        <hr style="border: 1px solid #eee; margin: 30px 0;">
+
+        <p style="font-size: 12px; color: #7f8c8d;">You received this email because you subscribed to match notifications. To unsubscribe, click <a href="{{unsubscribeUrl}}" style="color: #e67e22;">here</a>.</p>
+      </div>
+    `
+  },
+  {
+    "id": "tournament_update",
+    "subject": "Tournament Update: {{stage}} Stage Complete",
+    "html": `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2c3e50;">🏆 Tournament Update</h2>
+        
+        <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <h3 style="color: #e67e22; margin-bottom: 15px;">{{stage}} Stage Complete</h3>
+          <p>The {{stage}} stage of the Pan-African Tournament has concluded. Here are the results:</p>
+        </div>
+
+        <div style="margin: 20px 0;">
+          {{#each results}}
+          <div style="border: 1px solid #eee; padding: 15px; margin: 10px 0; border-radius: 4px;">
+            <p style="margin: 5px 0;"><strong>{{homeTeam}}</strong> {{homeScore}} - {{awayScore}} <strong>{{awayTeam}}</strong></p>
+          </div>
+          {{/each}}
+        </div>
+
+        <p>The next stage ({{nextStage}}) will begin on {{nextStageDate}}. Stay tuned for more exciting matches!</p>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="{{tournamentUrl}}" style="background-color: #e67e22; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block;">View Tournament Bracket</a>
+        </div>
+
+        <hr style="border: 1px solid #eee; margin: 30px 0;">
+
+        <p style="font-size: 12px; color: #7f8c8d;">You received this email because you subscribed to tournament updates. To unsubscribe, click <a href="{{unsubscribeUrl}}" style="color: #e67e22;">here</a>.</p>
+      </div>
+    `
+  }
+]
